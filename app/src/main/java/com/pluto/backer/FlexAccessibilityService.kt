@@ -15,7 +15,7 @@ import android.util.Log
 class FlexAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
-    private var wasInAmazonFlex = false
+    private var lastAmazonFlexTime = 0L
     private var backNavigationStartTime = 0L
 
     private val bringBackRunnable = Runnable {
@@ -53,23 +53,22 @@ class FlexAccessibilityService : AccessibilityService() {
         Log.d(TAG, "Event: pkg=$packageName, class=$className, type=${event.eventType}")
 
         if (packageName == "com.amazon.flex.rabbit") {
-            wasInAmazonFlex = true
+            lastAmazonFlexTime = SystemClock.uptimeMillis()
             val rootNode = rootInActiveWindow
             if (rootNode != null && isAtNavigationActivity(rootNode)) {
                 handler.removeCallbacks(backToMapRunnable)
             }
         } else if (isDialerPackage(packageName) || className.contains("InCall", ignoreCase = true) || className.contains("Dialer", ignoreCase = true)) {
-            if (wasInAmazonFlex) {
-                val rootNode = rootInActiveWindow
-                if (rootNode != null && isTargetCallScreen(rootNode, className)) {
-                    Log.d(TAG, "Active Amazon Flex call to $TARGET_PHONE_NUMBER detected. Scheduling return in 1.5s.")
-                    wasInAmazonFlex = false
-                    handler.removeCallbacks(bringBackRunnable)
-                    handler.postDelayed(bringBackRunnable, 1500)
-                }
+            val recentlyInFlex = (SystemClock.uptimeMillis() - lastAmazonFlexTime) < 30_000L
+            val rootNode = rootInActiveWindow
+            val isTarget = rootNode != null && isTargetCallScreen(rootNode, className)
+            Log.d(TAG, "Dialer event: recentlyInFlex=$recentlyInFlex, isTargetCallScreen=$isTarget")
+            if (recentlyInFlex && isTarget) {
+                Log.d(TAG, "Active Amazon Flex call to $TARGET_PHONE_NUMBER detected. Scheduling return in 1.5s.")
+                lastAmazonFlexTime = 0L
+                handler.removeCallbacks(bringBackRunnable)
+                handler.postDelayed(bringBackRunnable, 1500)
             }
-        } else if (!isSystemPackage(packageName)) {
-            wasInAmazonFlex = false
         }
     }
 
@@ -156,10 +155,13 @@ class FlexAccessibilityService : AccessibilityService() {
     }
 
     private fun isDialerBrowsingScreen(node: AccessibilityNodeInfo?, className: String): Boolean {
+        if (className.contains("InCall", ignoreCase = true)) {
+            return false
+        }
         if (className.contains("DialtactsActivity", ignoreCase = true) ||
             className.contains("CallLog", ignoreCase = true) ||
             className.contains("Contacts", ignoreCase = true) ||
-            className.contains("Dialpad", ignoreCase = true)) {
+            className.contains("DialpadFragment", ignoreCase = true)) {
             return true
         }
         if (node == null) return false
@@ -174,8 +176,8 @@ class FlexAccessibilityService : AccessibilityService() {
             contentDesc.equals("Search contacts", ignoreCase = true) ||
             text.equals("Favourites", ignoreCase = true) ||
             contentDesc.equals("Favourites", ignoreCase = true) ||
-            text.equals("Keypad", ignoreCase = true) ||
-            contentDesc.equals("Keypad", ignoreCase = true)) {
+            text.equals("Recents", ignoreCase = true) ||
+            contentDesc.equals("Recents", ignoreCase = true)) {
             return true
         }
 
@@ -259,15 +261,14 @@ class FlexAccessibilityService : AccessibilityService() {
 
     private fun isTargetCallScreen(node: AccessibilityNodeInfo?, className: String): Boolean {
         if (node == null) return false
-        if (isDialerBrowsingScreen(node, className)) {
+        val isInCallUI = className.contains("InCall", ignoreCase = true) ||
+                hasInCallControls(node) ||
+                isCallAudioActive()
+
+        if (!isInCallUI) {
             return false
         }
-        val isCallActive = isCallAudioActive() ||
-                className.contains("InCall", ignoreCase = true) ||
-                className.contains("telecom", ignoreCase = true) ||
-                hasInCallControls(node)
-
-        if (!isCallActive) {
+        if (isDialerBrowsingScreen(node, className)) {
             return false
         }
         return containsTargetPhoneNumber(node)
