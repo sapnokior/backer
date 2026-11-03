@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Backer</string>
+    <string name="accessibility_service_description">Backer service manages Amazon Flex calls in the background and navigates back to the map view automatically.</string>
+    <string name="enable_accessibility">Enable Accessibility Service</string>
+    <string name="accessibility_enabled">Accessibility Service is Enabled</string>
+    <string name="accessibility_disabled">Accessibility Service is Disabled. Please enable it in Settings.</string>
+    <string name="accessibility_settings">Accessibility Settings</string>
+</resources>
