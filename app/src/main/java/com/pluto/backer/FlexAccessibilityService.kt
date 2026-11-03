@@ -2,7 +2,9 @@ package com.pluto.backer
 
 import android.accessibilityservice.AccessibilityService
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -59,17 +61,8 @@ class FlexAccessibilityService : AccessibilityService() {
         } else if (isDialerPackage(packageName) || className.contains("InCall", ignoreCase = true) || className.contains("Dialer", ignoreCase = true)) {
             if (wasInAmazonFlex) {
                 val rootNode = rootInActiveWindow
-                val eventText = event.text.joinToString(" ")
-                val digitsEventText = eventText.replace(Regex("[^0-9]"), "")
-                val eventDesc = event.contentDescription?.toString() ?: ""
-                val digitsDesc = eventDesc.replace(Regex("[^0-9]"), "")
-
-                val matchesTargetNumber = digitsEventText.contains(TARGET_PHONE_NUMBER) ||
-                        digitsDesc.contains(TARGET_PHONE_NUMBER) ||
-                        (rootNode != null && isTargetCallScreen(rootNode))
-
-                if (matchesTargetNumber) {
-                    Log.d(TAG, "Amazon Flex call to $TARGET_PHONE_NUMBER detected. Scheduling return in 1.5s.")
+                if (rootNode != null && isTargetCallScreen(rootNode, className)) {
+                    Log.d(TAG, "Active Amazon Flex call to $TARGET_PHONE_NUMBER detected. Scheduling return in 1.5s.")
                     wasInAmazonFlex = false
                     handler.removeCallbacks(bringBackRunnable)
                     handler.postDelayed(bringBackRunnable, 1500)
@@ -154,7 +147,86 @@ class FlexAccessibilityService : AccessibilityService() {
         return false
     }
 
-    private fun isTargetCallScreen(node: AccessibilityNodeInfo?): Boolean {
+    private fun isCallAudioActive(): Boolean {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        val mode = audioManager?.mode ?: AudioManager.MODE_NORMAL
+        return mode == AudioManager.MODE_IN_CALL ||
+                mode == AudioManager.MODE_IN_COMMUNICATION ||
+                mode == AudioManager.MODE_RINGTONE
+    }
+
+    private fun isDialerBrowsingScreen(node: AccessibilityNodeInfo?, className: String): Boolean {
+        if (className.contains("DialtactsActivity", ignoreCase = true) ||
+            className.contains("CallLog", ignoreCase = true) ||
+            className.contains("Contacts", ignoreCase = true) ||
+            className.contains("Dialpad", ignoreCase = true)) {
+            return true
+        }
+        if (node == null) return false
+        val text = node.text?.toString() ?: ""
+        val contentDesc = node.contentDescription?.toString() ?: ""
+        val viewId = node.viewIdResourceName ?: ""
+
+        if (viewId.contains("search_box") ||
+            viewId.contains("bottom_nav") ||
+            viewId.contains("dialtacts_main_view") ||
+            text.equals("Search contacts", ignoreCase = true) ||
+            contentDesc.equals("Search contacts", ignoreCase = true) ||
+            text.equals("Favourites", ignoreCase = true) ||
+            contentDesc.equals("Favourites", ignoreCase = true) ||
+            text.equals("Keypad", ignoreCase = true) ||
+            contentDesc.equals("Keypad", ignoreCase = true)) {
+            return true
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i)
+            if (child != null) {
+                try {
+                    if (isDialerBrowsingScreen(child, className)) {
+                        return true
+                    }
+                } finally {
+                }
+            }
+        }
+        return false
+    }
+
+    private fun hasInCallControls(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        val text = node.text?.toString() ?: ""
+        val contentDesc = node.contentDescription?.toString() ?: ""
+        val viewId = node.viewIdResourceName ?: ""
+
+        if (viewId.contains("end_call") ||
+            viewId.contains("incall") ||
+            viewId.contains("contact_grid_middle_row") ||
+            contentDesc.contains("End call", ignoreCase = true) ||
+            text.contains("End call", ignoreCase = true) ||
+            contentDesc.contains("Hang up", ignoreCase = true) ||
+            text.contains("Calling…", ignoreCase = true) ||
+            text.contains("Calling...", ignoreCase = true) ||
+            text.contains("Ongoing call", ignoreCase = true) ||
+            text.contains("Dialing", ignoreCase = true)) {
+            return true
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i)
+            if (child != null) {
+                try {
+                    if (hasInCallControls(child)) {
+                        return true
+                    }
+                } finally {
+                }
+            }
+        }
+        return false
+    }
+
+    private fun containsTargetPhoneNumber(node: AccessibilityNodeInfo?): Boolean {
         if (node == null) return false
         val text = node.text?.toString() ?: ""
         val contentDesc = node.contentDescription?.toString() ?: ""
@@ -174,12 +246,31 @@ class FlexAccessibilityService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             val child = node.getChild(i)
             if (child != null) {
-                if (isTargetCallScreen(child)) {
-                    return true
+                try {
+                    if (containsTargetPhoneNumber(child)) {
+                        return true
+                    }
+                } finally {
                 }
             }
         }
         return false
+    }
+
+    private fun isTargetCallScreen(node: AccessibilityNodeInfo?, className: String): Boolean {
+        if (node == null) return false
+        if (isDialerBrowsingScreen(node, className)) {
+            return false
+        }
+        val isCallActive = isCallAudioActive() ||
+                className.contains("InCall", ignoreCase = true) ||
+                className.contains("telecom", ignoreCase = true) ||
+                hasInCallControls(node)
+
+        if (!isCallActive) {
+            return false
+        }
+        return containsTargetPhoneNumber(node)
     }
 
     private fun isSystemPackage(packageName: String): Boolean {
