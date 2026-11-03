@@ -1,6 +1,7 @@
 package com.pluto.backer
 
 import android.accessibilityservice.AccessibilityService
+import android.content.ComponentName
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
@@ -28,11 +29,18 @@ class FlexAccessibilityService : AccessibilityService() {
                         isNavigatingBackToMap = false
                         return
                     }
+                } else {
+                    // Not in Amazon Flex yet, do not press back in another application!
+                    handler.postDelayed(this, 300)
+                    return
                 }
+            } else {
+                handler.postDelayed(this, 300)
+                return
             }
             if (isNavigatingBackToMap) {
                 performGlobalAction(GLOBAL_ACTION_BACK)
-                handler.postDelayed(this, 300)
+                handler.postDelayed(this, 400)
             }
         }
     }
@@ -55,8 +63,9 @@ class FlexAccessibilityService : AccessibilityService() {
                 }
             }
         } else if (isDialerPackage(packageName) || className.contains("InCall", ignoreCase = true) || className.contains("Dialer", ignoreCase = true)) {
-            if (wasInAmazonFlex && event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            if (wasInAmazonFlex) {
                 Log.d(TAG, "Phone call screen detected while using Amazon Flex. Scheduling return in 1.5s.")
+                wasInAmazonFlex = false
                 handler.removeCallbacks(bringBackRunnable)
                 handler.postDelayed(bringBackRunnable, 1500)
             }
@@ -92,24 +101,32 @@ class FlexAccessibilityService : AccessibilityService() {
     private fun isDialerPackage(packageName: String): Boolean {
         return packageName.contains("dialer", ignoreCase = true) ||
                 packageName.contains("phone", ignoreCase = true) ||
-                packageName.contains("telephony", ignoreCase = true)
+                packageName.contains("telephony", ignoreCase = true) ||
+                packageName.contains("telecom", ignoreCase = true) ||
+                packageName.contains("incall", ignoreCase = true)
     }
 
     private fun bringAmazonFlexToForeground() {
         Log.d(TAG, "Bringing Amazon Flex to foreground...")
-        val intent = packageManager.getLaunchIntentForPackage("com.amazon.flex.rabbit")
-        if (intent != null) {
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            try {
-                startActivity(intent)
-                isNavigatingBackToMap = true
-                handler.removeCallbacks(backRunnable)
-                handler.postDelayed(backRunnable, 500)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to launch Amazon Flex", e)
+        var intent = packageManager.getLaunchIntentForPackage("com.amazon.flex.rabbit")
+        if (intent == null) {
+            intent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                `package` = "com.amazon.flex.rabbit"
+                component = ComponentName(
+                    "com.amazon.flex.rabbit",
+                    "com.amazon.rabbit.android.presentation.core.LaunchActivity"
+                )
             }
-        } else {
-            Log.w(TAG, "Amazon Flex launch intent not found")
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+        try {
+            startActivity(intent)
+            isNavigatingBackToMap = true
+            handler.removeCallbacks(backRunnable)
+            handler.postDelayed(backRunnable, 800)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch Amazon Flex", e)
         }
     }
 

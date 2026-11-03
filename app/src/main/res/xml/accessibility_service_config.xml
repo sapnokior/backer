@@ -2,8 +2,8 @@
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
     android:canRetrieveWindowContent="true"
     android:canRequestFilterKeyEvents="true"
     android:notificationTimeout="100"
-    android:packageNames="com.amazon.flex.rabbit,com.google.android.dialer,com.android.dialer,com.samsung.android.dialer,com.android.phone,com.google.android.apps.telephony" />
+    android:packageNames="com.amazon.flex.rabbit,com.google.android.dialer,com.android.dialer,com.samsung.android.dialer,com.android.phone,com.google.android.apps.telephony,com.google.android.telecomui,com.android.server.telecom" />
