@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.util.Log
@@ -13,9 +14,34 @@ class FlexAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var wasInAmazonFlex = false
+    private var backNavigationStartTime = 0L
 
     private val bringBackRunnable = Runnable {
         bringAmazonFlexToForeground()
+    }
+
+    private val backToMapRunnable = object : Runnable {
+        override fun run() {
+            val elapsed = SystemClock.uptimeMillis() - backNavigationStartTime
+            if (elapsed >= 2000L) {
+                Log.d(TAG, "Back navigation 2s timeout reached. Stopping back presses.")
+                return
+            }
+
+            val rootNode = rootInActiveWindow
+            if (rootNode != null) {
+                if (rootNode.packageName == "com.amazon.flex.rabbit") {
+                    if (isAtNavigationActivity(rootNode)) {
+                        Log.d(TAG, "TRAVEL screen reached! Stopping back presses.")
+                        return
+                    }
+                    Log.d(TAG, "In Amazon Flex; TRAVEL not yet reached. Pressing BACK (elapsed=${elapsed}ms).")
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                }
+            }
+
+            handler.postDelayed(this, 180L)
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -26,6 +52,10 @@ class FlexAccessibilityService : AccessibilityService() {
 
         if (packageName == "com.amazon.flex.rabbit") {
             wasInAmazonFlex = true
+            val rootNode = rootInActiveWindow
+            if (rootNode != null && isAtNavigationActivity(rootNode)) {
+                handler.removeCallbacks(backToMapRunnable)
+            }
         } else if (isDialerPackage(packageName) || className.contains("InCall", ignoreCase = true) || className.contains("Dialer", ignoreCase = true)) {
             if (wasInAmazonFlex) {
                 val rootNode = rootInActiveWindow
@@ -52,6 +82,7 @@ class FlexAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         handler.removeCallbacks(bringBackRunnable)
+        handler.removeCallbacks(backToMapRunnable)
     }
 
     override fun onServiceConnected() {
@@ -83,9 +114,44 @@ class FlexAccessibilityService : AccessibilityService() {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         try {
             startActivity(intent)
+            handler.removeCallbacks(backToMapRunnable)
+            handler.postDelayed({
+                backNavigationStartTime = SystemClock.uptimeMillis()
+                backToMapRunnable.run()
+            }, 350L)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch Amazon Flex", e)
         }
+    }
+
+    private fun isAtNavigationActivity(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        val text = node.text?.toString() ?: ""
+        val contentDesc = node.contentDescription?.toString() ?: ""
+        val viewId = node.viewIdResourceName ?: ""
+
+        if ("TRAVEL".equals(text, ignoreCase = true) ||
+            "TRAVEL".equals(contentDesc, ignoreCase = true) ||
+            text.contains("TRAVEL", ignoreCase = true) ||
+            contentDesc.contains("TRAVEL", ignoreCase = true) ||
+            (viewId.endsWith("toolbar_title") && "TRAVEL".equals(text, ignoreCase = true)) ||
+            viewId.endsWith("map_fragment_holder") ||
+            viewId.endsWith("navigationViewV2")) {
+            return true
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i)
+            if (child != null) {
+                try {
+                    if (isAtNavigationActivity(child)) {
+                        return true
+                    }
+                } finally {
+                }
+            }
+        }
+        return false
     }
 
     private fun isTargetCallScreen(node: AccessibilityNodeInfo?): Boolean {
