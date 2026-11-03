@@ -64,11 +64,25 @@ class FlexAccessibilityService : AccessibilityService() {
             }
         } else if (isDialerPackage(packageName) || className.contains("InCall", ignoreCase = true) || className.contains("Dialer", ignoreCase = true)) {
             if (wasInAmazonFlex) {
-                Log.d(TAG, "Phone call screen detected while using Amazon Flex. Scheduling return in 1.5s.")
-                wasInAmazonFlex = false
-                handler.removeCallbacks(bringBackRunnable)
-                handler.postDelayed(bringBackRunnable, 1500)
+                val rootNode = rootInActiveWindow
+                val eventText = event.text.joinToString(" ")
+                val digitsEventText = eventText.replace(Regex("[^0-9]"), "")
+                val eventDesc = event.contentDescription?.toString() ?: ""
+                val digitsDesc = eventDesc.replace(Regex("[^0-9]"), "")
+
+                val matchesTargetNumber = digitsEventText.contains(TARGET_PHONE_NUMBER) ||
+                        digitsDesc.contains(TARGET_PHONE_NUMBER) ||
+                        (rootNode != null && isTargetCallScreen(rootNode))
+
+                if (matchesTargetNumber) {
+                    Log.d(TAG, "Amazon Flex call to $TARGET_PHONE_NUMBER detected. Scheduling return in 1.5s.")
+                    wasInAmazonFlex = false
+                    handler.removeCallbacks(bringBackRunnable)
+                    handler.postDelayed(bringBackRunnable, 1500)
+                }
             }
+        } else if (!isSystemPackage(packageName)) {
+            wasInAmazonFlex = false
         }
     }
 
@@ -157,7 +171,43 @@ class FlexAccessibilityService : AccessibilityService() {
         return false
     }
 
+    private fun isTargetCallScreen(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        val text = node.text?.toString() ?: ""
+        val contentDesc = node.contentDescription?.toString() ?: ""
+        val viewId = node.viewIdResourceName ?: ""
+
+        val digitsText = text.replace(Regex("[^0-9]"), "")
+        val digitsDesc = contentDesc.replace(Regex("[^0-9]"), "")
+
+        if (digitsText.contains(TARGET_PHONE_NUMBER) ||
+            digitsDesc.contains(TARGET_PHONE_NUMBER) ||
+            text.contains(TARGET_PHONE_NUMBER) ||
+            contentDesc.contains(TARGET_PHONE_NUMBER) ||
+            (viewId.contains("contact_grid_middle_row") && (digitsText.contains(TARGET_PHONE_NUMBER) || digitsDesc.contains(TARGET_PHONE_NUMBER)))) {
+            return true
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i)
+            if (child != null) {
+                if (isTargetCallScreen(child)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private fun isSystemPackage(packageName: String): Boolean {
+        return packageName == "android" ||
+                packageName == "com.android.systemui" ||
+                packageName.contains("inputmethod") ||
+                packageName == "com.pluto.backer"
+    }
+
     companion object {
         private const val TAG = "FlexAccessibility"
+        private const val TARGET_PHONE_NUMBER = "7961734555"
     }
 }
