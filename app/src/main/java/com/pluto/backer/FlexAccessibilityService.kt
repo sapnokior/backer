@@ -5,7 +5,6 @@ import android.content.ComponentName
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
-import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.util.Log
@@ -14,35 +13,9 @@ class FlexAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var wasInAmazonFlex = false
-    private var isNavigatingBackToMap = false
 
     private val bringBackRunnable = Runnable {
         bringAmazonFlexToForeground()
-    }
-
-    private val backRunnable = object : Runnable {
-        override fun run() {
-            val rootNode = rootInActiveWindow
-            if (rootNode != null) {
-                if (rootNode.packageName == "com.amazon.flex.rabbit") {
-                    if (isAtNavigationActivity(rootNode)) {
-                        isNavigatingBackToMap = false
-                        return
-                    }
-                } else {
-                    // Not in Amazon Flex yet, do not press back in another application!
-                    handler.postDelayed(this, 300)
-                    return
-                }
-            } else {
-                handler.postDelayed(this, 300)
-                return
-            }
-            if (isNavigatingBackToMap) {
-                performGlobalAction(GLOBAL_ACTION_BACK)
-                handler.postDelayed(this, 400)
-            }
-        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -53,15 +26,6 @@ class FlexAccessibilityService : AccessibilityService() {
 
         if (packageName == "com.amazon.flex.rabbit") {
             wasInAmazonFlex = true
-            if (isNavigatingBackToMap) {
-                val rootNode = rootInActiveWindow
-                if (rootNode != null) {
-                    if (isAtNavigationActivity(rootNode)) {
-                        isNavigatingBackToMap = false
-                        handler.removeCallbacks(backRunnable)
-                    }
-                }
-            }
         } else if (isDialerPackage(packageName) || className.contains("InCall", ignoreCase = true) || className.contains("Dialer", ignoreCase = true)) {
             if (wasInAmazonFlex) {
                 val rootNode = rootInActiveWindow
@@ -86,25 +50,8 @@ class FlexAccessibilityService : AccessibilityService() {
         }
     }
 
-    override fun onKeyEvent(event: KeyEvent): Boolean {
-        if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_DOWN) {
-            val rootNode = rootInActiveWindow
-            if (rootNode != null) {
-                if (rootNode.packageName == "com.amazon.flex.rabbit") {
-                    if (!isAtNavigationActivity(rootNode)) {
-                        isNavigatingBackToMap = true
-                        handler.removeCallbacks(backRunnable)
-                        handler.post(backRunnable)
-                    }
-                }
-            }
-        }
-        return super.onKeyEvent(event)
-    }
-
     override fun onInterrupt() {
         handler.removeCallbacks(bringBackRunnable)
-        handler.removeCallbacks(backRunnable)
     }
 
     override fun onServiceConnected() {
@@ -136,39 +83,9 @@ class FlexAccessibilityService : AccessibilityService() {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         try {
             startActivity(intent)
-            isNavigatingBackToMap = true
-            handler.removeCallbacks(backRunnable)
-            handler.postDelayed(backRunnable, 800)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch Amazon Flex", e)
         }
-    }
-
-    private fun isAtNavigationActivity(node: AccessibilityNodeInfo?): Boolean {
-        if (node == null) return false
-        val text = node.text?.toString() ?: ""
-        val viewId = node.viewIdResourceName ?: ""
-
-        if ("TRAVEL".equals(text, ignoreCase = true) ||
-            (viewId.endsWith("toolbar_title") && "TRAVEL".equals(text, ignoreCase = true)) ||
-            viewId.endsWith("map_fragment_holder") ||
-            viewId.endsWith("navigationViewV2")) {
-            return true
-        }
-
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            if (child != null) {
-                try {
-                    if (isAtNavigationActivity(child)) {
-                        return true
-                    }
-                } finally {
-                    // child doesn't need explicit recycle in modern Android
-                }
-            }
-        }
-        return false
     }
 
     private fun isTargetCallScreen(node: AccessibilityNodeInfo?): Boolean {
